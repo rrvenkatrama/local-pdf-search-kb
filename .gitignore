@@ -1,0 +1,10 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# All generated data: vector DB, SQLite index, logs
+data/
+
+# macOS
+.DS_Store

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF Search KB</title>
+<style>
+  /* ------------------------------------------------------------------
+     Minimal, framework-free styling. Light, readable, single column.
+     ------------------------------------------------------------------ */
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    margin: 0; background: #f6f8fa; color: #222;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 40px 20px 80px; }
+
+  header h1 { margin: 0 0 4px; font-size: 26px; }
+  header p  { margin: 0 0 24px; color: #666; font-size: 14px; }
+
+  /* Search box */
+  .searchbar { display: flex; gap: 10px; }
+  .searchbar input {
+    flex: 1; font-size: 17px; padding: 12px 16px;
+    border: 1px solid #d0d7de; border-radius: 10px; outline: none;
+  }
+  .searchbar input:focus { border-color: #1a73e8; box-shadow: 0 0 0 3px #1a73e820; }
+  .searchbar button {
+    font-size: 16px; padding: 12px 22px; border: none; border-radius: 10px;
+    background: #1a73e8; color: #fff; cursor: pointer;
+  }
+  .searchbar button:hover { background: #1557b0; }
+
+  #meta { color: #666; font-size: 13px; margin: 14px 2px; min-height: 18px; }
+
+  /* One card per source document, its matching chunks listed inside */
+  .doc {
+    background: #fff; border: 1px solid #e1e4e8; border-radius: 10px;
+    margin-bottom: 16px; overflow: hidden;
+  }
+  .doc-head {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px; background: #fbfcfd; border-bottom: 1px solid #eef1f4;
+  }
+  .doc-head .name { font-weight: 600; font-size: 15px; }
+  .doc-head .path { color: #888; font-size: 12px; flex: 1;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .doc-head button {
+    border: 1px solid #d0d7de; background: #fff; border-radius: 8px;
+    padding: 5px 14px; font-size: 13px; cursor: pointer; color: #1a73e8;
+  }
+  .doc-head button:hover { background: #f0f7ff; }
+
+  .hit { padding: 12px 16px; border-bottom: 1px solid #f2f4f6; font-size: 14px; line-height: 1.55; }
+  .hit:last-child { border-bottom: none; }
+  .hit .page {
+    display: inline-block; background: #eef4ff; color: #1a73e8;
+    font-size: 11px; font-weight: 600; border-radius: 8px;
+    padding: 1px 8px; margin-right: 8px; vertical-align: 1px;
+  }
+  mark { background: #fff1a8; padding: 0 2px; border-radius: 2px; }
+
+  .empty { text-align: center; color: #888; padding: 40px 0; }
+
+  /* Footer: index status + re-index button */
+  footer {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: #fff; border-top: 1px solid #e1e4e8;
+    padding: 8px 20px; font-size: 12.5px; color: #666;
+    display: flex; align-items: center; gap: 14px;
+  }
+  footer .spacer { flex: 1; }
+  footer button {
+    border: 1px solid #d0d7de; background: #fff; border-radius: 8px;
+    padding: 4px 12px; font-size: 12.5px; cursor: pointer;
+  }
+  footer button:disabled { color: #aaa; cursor: default; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📄 PDF Search KB</h1>
+    <p>Hybrid keyword + semantic search over your local PDFs — fully offline.</p>
+  </header>
+
+  <div class="searchbar">
+    <input id="q" type="text" placeholder="e.g. tax filings for Rajesh Ramani 2024" autofocus>
+    <button id="go">Search</button>
+  </div>
+
+  <div id="meta"></div>
+  <div id="results"></div>
+</div>
+
+<footer>
+  <span id="status">Loading status…</span>
+  <span class="spacer"></span>
+  <button id="reindex">Re-index now</button>
+</footer>
+
+<script>
+// ---------------------------------------------------------------------------
+// Tiny vanilla-JS client. Three calls: /search, /open, /reindex (+ /status).
+// Snippets arrive pre-escaped from the server with only <mark> tags inside,
+// so assigning them to innerHTML is safe.
+// ---------------------------------------------------------------------------
+const $ = id => document.getElementById(id);
+
+async function runSearch() {
+  const query = $("q").value.trim();
+  if (!query) return;
+  $("meta").textContent = "Searching…";
+  $("results").innerHTML = "";
+
+  const t0 = performance.now();
+  const resp = await fetch("/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  const data = await resp.json();
+  const ms = Math.round(performance.now() - t0);
+
+  if (!data.results.length) {
+    $("meta").textContent = `No results (${ms} ms)`;
+    $("results").innerHTML = `<div class="empty">Nothing matched. Try different words.</div>`;
+    return;
+  }
+
+  // Group hits by source document, preserving overall ranking order.
+  const groups = new Map();
+  for (const hit of data.results) {
+    if (!groups.has(hit.file_path)) groups.set(hit.file_path, []);
+    groups.get(hit.file_path).push(hit);
+  }
+  $("meta").textContent =
+    `${data.results.length} passages in ${groups.size} documents (${ms} ms)`;
+
+  for (const [path, hits] of groups) {
+    const doc = document.createElement("div");
+    doc.className = "doc";
+
+    const head = document.createElement("div");
+    head.className = "doc-head";
+    const folder = path.slice(0, path.lastIndexOf("/"));
+    head.innerHTML = `<span class="name"></span><span class="path"></span>`;
+    head.querySelector(".name").textContent = hits[0].filename;
+    head.querySelector(".path").textContent = folder;
+
+    const openBtn = document.createElement("button");
+    openBtn.textContent = "Open";
+    openBtn.onclick = () => fetch("/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    head.appendChild(openBtn);
+    doc.appendChild(head);
+
+    for (const hit of hits) {
+      const div = document.createElement("div");
+      div.className = "hit";
+      div.innerHTML = `<span class="page">p. ${hit.page}</span>${hit.snippet}`;
+      doc.appendChild(div);
+    }
+    $("results").appendChild(doc);
+  }
+}
+
+async function refreshStatus() {
+  try {
+    const s = await (await fetch("/status")).json();
+    const t = s.totals;
+    let text = `${t.files_indexed} PDFs indexed · ${t.total_chunks} chunks`;
+    if (s.last_run) text += ` · last run ${s.last_run.finished}`;
+    if (s.indexing) text += " · ⏳ indexing now…";
+    $("status").textContent = text;
+    $("reindex").disabled = s.indexing;
+  } catch {
+    $("status").textContent = "Status unavailable";
+  }
+}
+
+$("go").onclick = runSearch;
+$("q").addEventListener("keydown", e => { if (e.key === "Enter") runSearch(); });
+$("reindex").onclick = async () => {
+  await fetch("/reindex", { method: "POST" });
+  refreshStatus();
+};
+
+refreshStatus();
+setInterval(refreshStatus, 10000);  // keep the footer fresh while indexing
+</script>
+</body>
+</html>

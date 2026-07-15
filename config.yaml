@@ -1,0 +1,29 @@
+# ============================================================================
+# Local PDF Search KB — configuration
+# Both the indexer (indexer.py) and the search service (server.py) read this.
+# ============================================================================
+
+# Folders to crawl for PDFs (recursive). ~ is expanded to your home directory.
+roots:
+  - "~/Documents"
+
+# Glob patterns to skip, matched against the full file path.
+# Example: "*/Old Archives/*" or "*draft*.pdf"
+exclude_globs: []
+
+# Local embedding model (sentence-transformers name).
+# paraphrase-multilingual-MiniLM-L12-v2: fast, 384-dim, handles mixed languages.
+# Upgrade path if search quality disappoints: "BAAI/bge-m3" (better, ~2GB, slower).
+model: "paraphrase-multilingual-MiniLM-L12-v2"
+
+# Chunking: windows of complete sentences, with overlap between windows.
+chunk_sentences: 8          # sentences per chunk
+chunk_overlap_sentences: 4  # sentences shared between consecutive chunks
+
+# Search tuning.
+top_k: 10                   # results returned to the UI
+candidates_per_engine: 20   # hits pulled from each engine before RRF fusion
+rrf_k: 60                   # RRF constant (standard value; rarely needs changing)
+
+# Port the FastAPI search service listens on (UI at http://localhost:<port>/).
+port: 8130

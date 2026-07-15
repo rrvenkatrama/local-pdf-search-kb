@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Daily PDF indexer schedule (macOS launchd user agent).
+
+  Installed by install.sh into ~/Library/LaunchAgents/ with the
+  __PROJECT_ROOT__ placeholders replaced by the real project path.
+
+  Runs indexer.py every day at 08:00. Unchanged files are skipped by the
+  indexer's mtime/size check, so a quiet day costs a few seconds of scanning.
+  The "Re-index now" button in the UI runs the same script on demand.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.rajesh.pdfkb.indexer</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PROJECT_ROOT__/venv/bin/python</string>
+        <string>__PROJECT_ROOT__/indexer.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_ROOT__</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Don't run at load time; only on the schedule (and via the UI button). -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- launchd-level output; the indexer also writes its own data/index.log -->
+    <key>StandardOutPath</key>
+    <string>__PROJECT_ROOT__/data/launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>__PROJECT_ROOT__/data/launchd.log</string>
+</dict>
+</plist>

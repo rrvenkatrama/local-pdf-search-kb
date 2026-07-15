@@ -1,0 +1,8 @@
+# Local PDF Search KB — all dependencies run fully offline after install.
+pymupdf>=1.24          # PDF text extraction (fitz)
+sentence-transformers>=3.0   # local embedding model (pulls in torch)
+chromadb>=0.5          # embedded vector database (HNSW)
+pysbd>=0.3             # rule-based sentence boundary detection
+fastapi>=0.111         # search service
+uvicorn>=0.30          # ASGI server for FastAPI
+pyyaml>=6.0            # config.yaml loading

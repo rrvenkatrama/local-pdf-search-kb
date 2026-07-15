@@ -1,0 +1,24 @@
+{
+    // VS Code workspace for the Local PDF Search KB project.
+    // Open this file in VS Code ("File > Open Workspace from File...").
+    "folders": [
+        {
+            "name": "PDF Search KB",
+            "path": "."
+        }
+    ],
+    "settings": {
+        "python.defaultInterpreterPath": "${workspaceFolder}/venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "files.exclude": {
+            "**/__pycache__": true,
+            "**/.DS_Store": true
+        },
+        "git.ignoreLimitWarning": true
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-python.python"
+        ]
+    }
+}

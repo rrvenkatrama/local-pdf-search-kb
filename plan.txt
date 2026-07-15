@@ -1,0 +1,144 @@
+================================================================================
+LOCAL PDF SEARCH KB — REQUIREMENTS & PLAN
+Project: /Users/rajeshramani/ai/Local PDF Search RAG KB
+Finalized: 2026-07-14
+================================================================================
+
+1. GOAL
+--------------------------------------------------------------------------------
+A fully local, zero-API-cost hybrid search system over personal PDF documents.
+Type a question/sentence/keywords in a browser UI; get back the most relevant
+passages with source file, page number, highlighted snippet, and a button to
+open the PDF. Search only — no LLM, no generation, no summarization.
+
+2. CONFIRMED DECISIONS
+--------------------------------------------------------------------------------
+- Vector DB:        Chroma (embedded, persistent, no Docker). HNSW internal.
+- Keyword search:   SQLite FTS5 (BM25), separate index over the same chunks.
+- Fusion:           Reciprocal Rank Fusion (k=60) merging both ranked lists.
+- Embeddings:       sentence-transformers, LOCAL, in-process.
+                    Model: paraphrase-multilingual-MiniLM-L12-v2 (384-dim)
+                    — corpus is mixed-language. Configurable; bge-m3 is the
+                    quality upgrade path if results disappoint.
+- Open results:     macOS Preview/Acrobat via server-side `open` call
+                    (endpoint runs `open <path>`; UI works from this Mac only).
+- Crawler trigger:  Scheduled DAILY (launchd) + manual "Re-index now" button
+                    in the UI (button shells out to the same indexer script).
+- Scanned PDFs:     Skip, but LOG as "no text extracted" for visibility.
+- Corpus:           ~/Documents, recursive. Measured 2026-07-14: 1,604 PDFs,
+                    1.73 GB. Config supports multiple roots for later.
+- Exclusions:       None requested. Password-protected PDFs logged + skipped.
+- Results UI:       Top 10 chunks, grouped by source PDF, highlighted snippet,
+                    page number, Open button. No filters/pagination for v1.
+
+3. ARCHITECTURE
+--------------------------------------------------------------------------------
+Two processes, shared storage:
+
+  [launchd daily / UI button]                [browser]
+            |                                     |
+            v                                     v
+      indexer.py  ----writes---->  data/    <---reads----  FastAPI service
+                                   - chroma/ (vectors)     - GET  /            UI
+                                   - kb.db   (FTS5 +       - POST /search
+                                     manifest)             - POST /open
+                                   - index.log             - POST /reindex
+                                                           - GET  /status
+
+4. COMPONENTS
+--------------------------------------------------------------------------------
+4.1 Indexer (indexer.py) — runs to completion, then exits
+    - Walk configured roots recursively for *.pdf
+    - Manifest table (SQLite): path, mtime, size, content_hash, status,
+      chunk_count, last_indexed, error
+    - Skip unchanged files (mtime+size fast path, hash to confirm)
+    - Changed/new file:
+        1. DELETE all existing chunks for that path (Chroma + FTS5)
+        2. Extract text per page (pymupdf)
+        3. Page yields no text -> count it; whole file no text -> log "scanned/
+           no text layer", status=skipped_no_text
+        4. Sentence-split per page (proper tokenizer; handles Dr., U.S., e.g.)
+        5. Chunk: windows of 8 sentences, overlap 4 sentences (within page;
+           chunk stores page number). Complete sentences only.
+        6. Embed chunks in batches -> upsert Chroma (id, vector, metadata)
+        7. Insert same chunks into FTS5 (text, file_path, page)
+        8. Update manifest
+    - Deleted files: manifest rows whose path no longer exists -> purge chunks
+    - Lock file prevents concurrent runs (daily job vs. manual button)
+    - Log to data/index.log: files indexed/skipped/failed, chunk counts, timing
+
+4.2 Search service (server.py, FastAPI + uvicorn)
+    - Loads embedding model once at startup
+    - POST /search {query, top_k=10}:
+        a. Embed query -> Chroma top 20
+        b. Query FTS5 (BM25) top 20; auto-add quoted phrase for consecutive
+           capitalized words ("Rajesh Ramani" -> "rajesh ramani" phrase)
+        c. RRF merge (k=60) -> top 10
+        d. Return per hit: file_path, filename, page, snippet (FTS5 highlight
+           or chunk excerpt), rrf_score, per-engine ranks (debug)
+    - POST /open {path}: validate path is inside a configured root AND exists
+      in manifest, then subprocess `open <path>` (Preview/Acrobat)
+    - POST /reindex: spawn indexer.py (refuse if lock held); /status reports
+      last run summary + whether indexer is running
+    - Serves static UI at /
+
+4.3 UI (static/index.html — single file, vanilla JS)
+    - Search box + button; Enter submits
+    - Results grouped by document: filename header (+ folder path muted),
+      then its matching chunks: snippet with <mark> highlights, "p. 12",
+      Open button per document
+    - "Re-index now" button + last-index-time in footer (from /status)
+    - Clean, minimal, no framework
+
+4.4 Scheduling (launchd, user agent)
+    - ~/Library/LaunchAgents/com.rajesh.pdfkb.indexer.plist
+      StartCalendarInterval daily 08:00, RunAtLoad false
+    - install.sh copies plist + `launchctl load`
+
+5. STORAGE LAYOUT (project_root/data/, gitignored)
+--------------------------------------------------------------------------------
+- chroma/            Chroma persistent collection "pdf_chunks"
+- kb.db              SQLite: manifest table + chunks_fts (FTS5) virtual table
+- index.log          rolling indexer log
+
+Chunk ID: sha1(file_path)[:16] + "_" + chunk_seq  (stable per file version;
+all IDs for a path derivable for deletion)
+
+6. CONFIG (config.yaml)
+--------------------------------------------------------------------------------
+roots: ["~/Documents"]
+exclude_globs: []
+model: paraphrase-multilingual-MiniLM-L12-v2
+chunk_sentences: 8
+chunk_overlap_sentences: 4
+top_k: 10
+candidates_per_engine: 20
+rrf_k: 60
+port: 8130
+
+7. TECH STACK
+--------------------------------------------------------------------------------
+Python 3.11+, venv in project. pymupdf (extraction), sentence-transformers,
+chromadb, fastapi, uvicorn, pyyaml. Sentence splitting: pysbd (light, no
+model download) — swap for syntok if quality issues. stdlib sqlite3 for FTS5.
+
+8. MILESTONES
+--------------------------------------------------------------------------------
+M1  Skeleton: venv, config, manifest schema, PDF walker + change detection
+M2  Extraction + sentence chunking (verify boundaries on real PDFs)
+M3  Embedding + Chroma upsert + FTS5 insert; full initial index of ~/Documents
+    (expect ~1.6k files; minutes on Apple Silicon with batching)
+M4  Search service: /search with RRF, /open, /status
+M5  UI: search page + results + Open + Re-index button
+M6  launchd daily schedule + install.sh; delete/modify re-index verified
+M7  Quality pass: test queries (names, brands, paraphrase), tune candidates
+    /chunk size if needed
+
+9. OUT OF SCOPE (v1) — noted for later
+--------------------------------------------------------------------------------
+- OCR for scanned PDFs (Tesseract/ocrmypdf) — currently logged+skipped
+- NER entity filters / facets; date & folder filters; pagination
+- LLM answer generation / summarization
+- Access from other machines (Preview open is Mac-local)
+- Non-PDF formats (docx, txt, html)
+================================================================================
